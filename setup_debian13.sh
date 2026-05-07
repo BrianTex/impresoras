@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # ==========================================
 # Script de Migración para Debian 13 (Trixie)
