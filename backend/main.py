@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, date
+from pydantic import BaseModel
 import uvicorn
 import asyncio
 
@@ -92,12 +93,16 @@ def get_db():
 def read_printers(db: Session = Depends(get_db)):
     return db.query(models.Printer).all()
 
+class PrinterCreate(BaseModel):
+    name: str
+    ip_address: str
+
 @app.post("/printers")
-def create_printer(name: str, ip_address: str, db: Session = Depends(get_db)):
-    existing = db.query(models.Printer).filter(models.Printer.ip_address == ip_address).first()
+def create_printer(printer: PrinterCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.Printer).filter(models.Printer.ip_address == printer.ip_address).first()
     if existing:
         raise HTTPException(status_code=400, detail="IP ya registrada")
-    db_p = models.Printer(name=name, ip_address=ip_address)
+    db_p = models.Printer(name=printer.name, ip_address=printer.ip_address)
     db.add(db_p)
     db.commit()
     db.refresh(db_p)

@@ -34,7 +34,7 @@ function App() {
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [calendarDate, setCalendarDate] = useState<Date>(new Date());
 
-  const API_URL = 'http://localhost:8000';
+  const API_URL = `http://${window.location.hostname}:8000`;
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -56,10 +56,13 @@ function App() {
   const handleAddPrinter = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/printers?name=${newName}&ip_address=${newIp}`);
+      await axios.post(`${API_URL}/printers`, { name: newName, ip_address: newIp });
       setNewName(''); setNewIp(''); setShowAddForm(false);
       fetchStatus();
-    } catch (error) { alert("Error al agregar impresora."); }
+    } catch (error: any) { 
+      console.error("Error al agregar impresora:", error);
+      alert(`Error al agregar impresora: ${error.response?.data?.detail || error.message}`); 
+    }
   };
 
   const handleOpenHistory = async (printer: PrinterStatus) => {
