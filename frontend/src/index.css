@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .animate-float {
+    animation: float 15s ease-in-out infinite;
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-20px) scale(1.05);
+  }
+}
+
+html, body {
+  background-color: #0B0F19;
+  color: #CBD5E1;
+}
