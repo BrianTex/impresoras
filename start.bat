@@ -1,9 +1,9 @@
 @echo off
 echo Iniciando Backend...
-start cmd /k "cd backend && pip install -r requirements.txt && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+start cmd /k "cd backend && call venv\Scripts\activate.bat && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 
 echo Iniciando Frontend...
-start cmd /k "cd frontend && npm install && npm run dev"
+start cmd /k "cd frontend && npm run dev"
 
 echo.
 echo Panel de Impresoras iniciado.
