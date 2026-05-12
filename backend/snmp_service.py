@@ -11,6 +11,8 @@ async def get_printer_data(ip):
         "page_count": 0,
         "copied_count": 0,
         "printed_count": 0,
+        "two_sided_copied_count": 0,
+        "two_sided_printed_count": 0,
         "toner_percent": 0,
         "toner_install_date": "N/A"
     }
@@ -83,10 +85,10 @@ async def get_printer_data(ip):
         try:
             usage_url = f"https://{ip}/counters/usage.php"
             resp = await client.get(usage_url, timeout=4.0)
-            print(resp.text)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 text = soup.get_text(separator=' | ')
+                print(text)
                 copied = re.search(r'(?:Hojas copiadas en negro|Black Copied Sheets)[\s|]+([\d,.]+)', text, re.I)
                 if copied:
                     results["copied_count"] = int(copied.group(1).replace(',', '').replace('.', ''))
@@ -101,6 +103,13 @@ async def get_printer_data(ip):
                 else:
                     printed_fallback = re.search(r'(?:Impreso|Impresiones|Printed)[:\s|]+([\d,.]+)', text, re.I)
                     if printed_fallback: results["printed_count"] = int(printed_fallback.group(1).replace(',', '').replace('.', ''))
+                two_sided_copied = re.search(r'Black Copied 2 Sided Sheets.*?<td[^>]*>\s*([\d,.]+)\s*<', resp.text, re.I | re.DOTALL)
+                if two_sided_copied:
+                    results["two_sided_copied_count"] = int(two_sided_copied.group(1).replace(',', '').replace('.', ''))
+
+                two_sided_printed = re.search(r'Black Printed 2 Sided Sheets.*?<td[^>]*>\s*([\d,.]+)\s*<', resp.text, re.I | re.DOTALL)
+                if two_sided_printed:
+                    results["two_sided_printed_count"] = int(two_sided_printed.group(1).replace(',', '').replace('.', ''))
                 
                 pc_m = re.search(r'(?:Total Impressions|Total|Contador)[:\s|]+([\d,.]+)', text, re.I)
                 if pc_m: 

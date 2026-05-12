@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Plus, Printer as PrinterIcon, RefreshCw, Calendar as CalendarIcon, Hash, Percent, TrendingDown, Copy, FileText, Layers, Droplet, Activity, Server, MapPin, CalendarDays, X } from 'lucide-react';
+import { Plus, Printer as PrinterIcon, RefreshCw, Calendar as CalendarIcon, Hash, Percent, TrendingDown, Copy, FileText, Layers, Droplet, Activity, Server, MapPin, CalendarDays, X, Bell, CheckCircle2 } from 'lucide-react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
@@ -17,10 +17,21 @@ interface PrinterStatus {
   printed_count: number;
   toner_percent: number;
   toner_install_date: string;
+  two_sided_copied_count?: number;
+  two_sided_printed_count?: number;
   daily_total: number;
   daily_copied: number;
   daily_printed: number;
+  daily_two_sided_copied?: number;
+  daily_two_sided_printed?: number;
   daily_toner_drop: number;
+}
+
+interface AppNotification {
+  id: number;
+  message: string;
+  created_at: string;
+  read: boolean;
 }
 
 function App() {
@@ -33,6 +44,8 @@ function App() {
   const [selectedPrinterHistory, setSelectedPrinterHistory] = useState<PrinterStatus | null>(null);
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [calendarDate, setCalendarDate] = useState<Date>(new Date());
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const API_URL = `http://${window.location.hostname}:8000`;
 
@@ -47,9 +60,31 @@ function App() {
     setLoading(false);
   };
 
+  const fetchNotifications = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/notifications`);
+      setNotifications(response.data);
+    } catch (error) {
+      console.error("Error fetching notifications", error);
+    }
+  };
+
+  const markAsRead = async (id: number) => {
+    try {
+      await axios.post(`${API_URL}/notifications/${id}/read`);
+      fetchNotifications();
+    } catch (error) {
+      console.error("Error marking read", error);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 3600000); // 1 hora
+    fetchNotifications();
+    const interval = setInterval(() => {
+      fetchStatus();
+      fetchNotifications();
+    }, 3600000); // 1 hora
     return () => clearInterval(interval);
   }, []);
 
@@ -101,7 +136,39 @@ function App() {
             <p className="text-slate-500 mt-3 text-lg font-medium max-w-xl">Panel de control de consumibles e historial volumétrico en tiempo real.</p>
           </div>
 
-          <div className="flex flex-wrap gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap gap-3 w-full md:w-auto relative">
+            <div className="relative">
+              <button onClick={() => setShowNotifications(!showNotifications)} className="flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 p-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg text-white group">
+                <Bell size={20} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+                {notifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.8)]"></span>
+                )}
+              </button>
+              
+              {showNotifications && (
+                <div className="absolute right-0 top-full mt-2 w-80 max-h-96 overflow-y-auto bg-[#131826]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-50 p-2">
+                  <h3 className="text-white font-bold px-3 py-2 border-b border-white/10 mb-2">Notificaciones</h3>
+                  {notifications.length === 0 ? (
+                    <p className="text-slate-400 text-sm px-3 py-4 text-center">No hay notificaciones.</p>
+                  ) : (
+                    notifications.map(n => (
+                      <div key={n.id} className={`p-3 rounded-xl mb-1 flex items-start justify-between gap-3 ${n.read ? 'opacity-60' : 'bg-white/5 border border-white/5'}`}>
+                        <div className="flex-1">
+                          <p className={`text-sm ${n.read ? 'text-slate-400' : 'text-slate-200 font-medium'}`}>{n.message}</p>
+                          <span className="text-[10px] text-slate-500">{new Date(n.created_at).toLocaleString()}</span>
+                        </div>
+                        {!n.read && (
+                          <button onClick={() => markAsRead(n.id)} className="text-indigo-400 hover:text-indigo-300 p-1 bg-indigo-500/10 rounded-lg shrink-0">
+                            <CheckCircle2 size={16} />
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
             <button onClick={fetchStatus} disabled={loading} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg font-semibold text-white group disabled:opacity-50">
               <RefreshCw size={18} className={`text-slate-400 group-hover:text-indigo-400 transition-colors ${loading ? 'animate-spin text-indigo-400' : ''}`} />
               <span>Actualizar</span>
@@ -215,7 +282,7 @@ function App() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-3 mb-3">
                         <div className="bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20 transition-all hover:bg-indigo-500/20">
                           <p className="text-[10px] uppercase font-bold text-indigo-300 tracking-widest mb-2 flex items-center gap-1.5">
                             <FileText size={12} /> Impresas Hoy
@@ -230,14 +297,37 @@ function App() {
                         </div>
                       </div>
 
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20 transition-all hover:bg-indigo-500/20">
+                          <p className="text-[10px] uppercase font-bold text-indigo-300 tracking-widest mb-2 flex items-center gap-1.5">
+                            <FileText size={12} /> Impr. 2 Caras Hoy
+                          </p>
+                          <span className="text-3xl font-black text-white tracking-tight">{printer.daily_two_sided_printed || 0}</span>
+                        </div>
+                        <div className="bg-blue-500/10 p-4 rounded-2xl border border-blue-500/20 transition-all hover:bg-blue-500/20">
+                          <p className="text-[10px] uppercase font-bold text-blue-300 tracking-widest mb-2 flex items-center gap-1.5">
+                            <Copy size={12} /> Cop. 2 Caras Hoy
+                          </p>
+                          <span className="text-3xl font-black text-white tracking-tight">{printer.daily_two_sided_copied || 0}</span>
+                        </div>
+                      </div>
+
                       <div className="space-y-1 bg-white/5 p-4 rounded-2xl border border-white/5">
                         <div className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
                           <span className="text-xs font-medium text-slate-400 flex items-center gap-2"><FileText size={12} /> Hojas impresas totales</span>
                           <span className="font-semibold text-white font-inter">{printer.printed_count.toLocaleString()}</span>
                         </div>
                         <div className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                          <span className="text-xs font-medium text-slate-400 flex items-center gap-2"><FileText size={12} /> Impresas 2 caras totales</span>
+                          <span className="font-semibold text-white font-inter">{printer.two_sided_printed_count?.toLocaleString() || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
                           <span className="text-xs font-medium text-slate-400 flex items-center gap-2"><Copy size={12} /> Hojas copiadas totales</span>
                           <span className="font-semibold text-white font-inter">{printer.copied_count.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                          <span className="text-xs font-medium text-slate-400 flex items-center gap-2"><Copy size={12} /> Copiadas 2 caras totales</span>
+                          <span className="font-semibold text-white font-inter">{printer.two_sided_copied_count?.toLocaleString() || 0}</span>
                         </div>
                         <div className="flex justify-between items-center py-2 mt-1">
                           <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5"><Layers size={12} /> Gran Total Equipo</span>
@@ -289,8 +379,11 @@ function App() {
                     className="w-full bg-[#0B0F19] rounded-2xl border-none text-white font-sans p-4 shadow-inner"
                     tileClassName={({ date }) => {
                       const dateStr = format(date, 'yyyy-MM-dd');
-                      const hasData = historyData.some(d => d.date === dateStr);
-                      return hasData ? 'has-data-tile' : '';
+                      const dayData = historyData.find(d => d.date === dateStr);
+                      if (dayData) {
+                        return dayData.toner_changed ? 'has-data-tile toner-changed-tile' : 'has-data-tile';
+                      }
+                      return '';
                     }}
                   />
                 </div>
@@ -308,9 +401,17 @@ function App() {
                             <span className="text-sm text-indigo-300 flex items-center gap-2"><FileText size={16} /> Impresas</span>
                             <span className="font-bold text-white text-lg">{selectedDayData.daily_printed}</span>
                           </div>
+                          <div className="flex justify-between items-center bg-indigo-500/10 p-3 rounded-xl border border-indigo-500/20">
+                            <span className="text-sm text-indigo-300 flex items-center gap-2"><FileText size={16} /> Impresas 2 Caras</span>
+                            <span className="font-bold text-white text-lg">{selectedDayData.daily_two_sided_printed || 0}</span>
+                          </div>
                           <div className="flex justify-between items-center bg-blue-500/10 p-3 rounded-xl border border-blue-500/20">
                             <span className="text-sm text-blue-300 flex items-center gap-2"><Copy size={16} /> Copiadas</span>
                             <span className="font-bold text-white text-lg">{selectedDayData.daily_copied}</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-blue-500/10 p-3 rounded-xl border border-blue-500/20">
+                            <span className="text-sm text-blue-300 flex items-center gap-2"><Copy size={16} /> Copiadas 2 Caras</span>
+                            <span className="font-bold text-white text-lg">{selectedDayData.daily_two_sided_copied || 0}</span>
                           </div>
                           <div className="flex justify-between items-center bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">
                             <span className="text-sm text-rose-300 flex items-center gap-2"><Droplet size={16} /> Tóner Gastado</span>
@@ -399,6 +500,13 @@ function App() {
           height: 4px;
           border-radius: 50%;
           background-color: #38bdf8; /* sky-400 */
+        }
+        .toner-changed-tile {
+          background-color: rgba(245, 158, 11, 0.15) !important; /* amber-500 bg */
+        }
+        .toner-changed-tile::after {
+          background-color: #f59e0b !important; /* amber-500 dot */
+          box-shadow: 0 0 6px #f59e0b;
         }
         .react-calendar__tile--active.has-data-tile::after {
           background-color: white;

@@ -5,7 +5,7 @@ echo Proyecto: Impresoras Dashboard (FastAPI + React)
 echo ==========================================
 echo.
 echo Iniciando proceso de configuracion en Windows...
-timeout /t 2 /nobreak >nul
+ping 127.0.0.1 -n 3 > nul
 
 echo.
 echo [1/2] Configurando el Backend (Python)...
