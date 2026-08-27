@@ -25,6 +25,7 @@ interface PrinterStatus {
   daily_two_sided_copied?: number;
   daily_two_sided_printed?: number;
   daily_toner_drop: number;
+  last_checked_at?: string;
 }
 
 interface AppNotification {
@@ -84,7 +85,7 @@ function App() {
     const interval = setInterval(() => {
       fetchStatus();
       fetchNotifications();
-    }, 3600000); // 1 hora
+    }, 60000); // 60s
     return () => clearInterval(interval);
   }, []);
 
@@ -109,6 +110,15 @@ function App() {
       setHistoryData(response.data);
     } catch (error) {
       console.error("Error fetching history", error);
+    }
+  };
+
+  const handleRefreshPrinter = async (printer_id: number) => {
+    try {
+      await axios.post(`${API_URL}/printers/${printer_id}/refresh`);
+      fetchStatus();
+    } catch (error) {
+      console.error("Error refreshing printer", error);
     }
   };
 
@@ -235,8 +245,13 @@ function App() {
                           )}
                         </div>
                       </div>
-                      <div className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isOnline ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
-                        {printer.status}
+                      <div className="flex flex-col items-end gap-2">
+                        <div className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isOnline ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                          {printer.status}
+                        </div>
+                        <button onClick={() => handleRefreshPrinter(printer.db_id)} className="text-slate-500 hover:text-indigo-400 transition-colors bg-white/5 hover:bg-white/10 p-1.5 rounded-full border border-white/5" title="Forzar actualización">
+                          <RefreshCw size={14} />
+                        </button>
                       </div>
                     </div>
 

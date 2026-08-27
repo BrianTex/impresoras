@@ -10,7 +10,25 @@ class Printer(Base):
     name = Column(String, index=True)
     ip_address = Column(String, unique=True, index=True)
     last_toner_install_date = Column(String, nullable=True)
-    
+
+    # --- NUEVO: snapshot cacheado del último scraping ---
+    last_status = Column(String, default="Offline")
+    last_checked_at = Column(DateTime, nullable=True)
+    serial = Column(String, default="N/A")
+    location = Column(String, default="N/A")
+    page_count = Column(Integer, default=0)
+    copied_count = Column(Integer, default=0)
+    printed_count = Column(Integer, default=0)
+    two_sided_copied_count = Column(Integer, default=0)
+    two_sided_printed_count = Column(Integer, default=0)
+    toner_percent = Column(Float, default=0)
+    daily_total = Column(Integer, default=0)
+    daily_copied = Column(Integer, default=0)
+    daily_printed = Column(Integer, default=0)
+    daily_two_sided_copied = Column(Integer, default=0)
+    daily_two_sided_printed = Column(Integer, default=0)
+    daily_toner_drop = Column(Float, default=0.0)
+
     logs = relationship("DailyLog", back_populates="printer")
     notifications = relationship("Notification", back_populates="printer")
 

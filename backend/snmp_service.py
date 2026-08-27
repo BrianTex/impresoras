@@ -2,119 +2,104 @@ import httpx
 from bs4 import BeautifulSoup
 import re
 
+def _parse_rows(html: str):
+    """Convierte cualquier tabla <tr><td>label</td>...<td>value</td></tr> en pares (label, value)."""
+    soup = BeautifulSoup(html, 'html.parser')
+    rows = []
+    for tr in soup.find_all('tr'):
+        tds = tr.find_all('td')
+        if len(tds) >= 2:
+            label = tds[0].get_text(strip=True)
+            value = tds[-1].get_text(strip=True)
+            if label:
+                rows.append((label.lower(), value))
+    return rows
+
+def _find(rows, include, exclude=None):
+    """Primer valor cuya etiqueta contiene TODAS las palabras de include y NINGUNA de exclude."""
+    exclude = exclude or []
+    for label, value in rows:
+        if all(k in label for k in include) and not any(k in label for k in exclude):
+            return value
+    return None
+
+def _to_int(value):
+    if not value:
+        return None
+    cleaned = re.sub(r'[^\d]', '', value)
+    return int(cleaned) if cleaned else None
+
+async def _get(client, url, timeout=4.0):
+    try:
+        resp = await client.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            return resp
+    except Exception:
+        pass
+    return None
+
 async def get_printer_data(ip):
     results = {
-        "ip": ip,
-        "status": "Offline",
-        "serial": "N/A",
-        "location": "N/A",
-        "page_count": 0,
-        "copied_count": 0,
-        "printed_count": 0,
-        "two_sided_copied_count": 0,
-        "two_sided_printed_count": 0,
-        "toner_percent": 0,
-        "toner_install_date": "N/A"
+        "ip": ip, "status": "Offline", "serial": "N/A", "location": "N/A",
+        "page_count": 0, "copied_count": 0, "printed_count": 0,
+        "two_sided_copied_count": 0, "two_sided_printed_count": 0,
+        "toner_percent": 0, "toner_install_date": "N/A"
     }
 
     async with httpx.AsyncClient(verify=False, timeout=8.0, follow_redirects=True) as client:
-        # 1. Basic Info: Welcome Page
-        try:
-            welcome_url = f"http://{ip}/stat/welcome.php"
-            resp = await client.get(welcome_url, timeout=4.0)
-            if resp.status_code == 200:
-                results["status"] = "Online"
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                text = soup.get_text(separator=' | ')
-                
-                sn_m = re.search(r'(?:Serial Number|S/N|Serie)[:\s|]+([A-Z0-9]{6,})', text, re.I)
-                if sn_m: results["serial"] = sn_m.group(1).strip()
-                
-                loc_m = re.search(r'(?:Location|Lugar|Ubicación)[:\s|]+([^|]+)', text, re.I)
-                if loc_m: results["location"] = loc_m.group(1).strip()
-        except:
-            # Fallback to https just in case
-            try:
-                welcome_url = f"https://{ip}/stat/welcome.php"
-                resp = await client.get(welcome_url, timeout=4.0)
-                if resp.status_code == 200:
-                    results["status"] = "Online"
-                    soup = BeautifulSoup(resp.text, 'html.parser')
-                    text = soup.get_text(separator=' | ')
-                    sn_m = re.search(r'(?:Serial Number|S/N|Serie)[:\s|]+([A-Z0-9]{6,})', text, re.I)
-                    if sn_m: results["serial"] = sn_m.group(1).strip()
-                    loc_m = re.search(r'(?:Location|Lugar|Ubicación)[:\s|]+([^|]+)', text, re.I)
-                    if loc_m: results["location"] = loc_m.group(1).strip()
-            except: pass
+        # 1. Info básica (probamos http, si falla https)
+        resp = await _get(client, f"http://{ip}/stat/welcome.php")
+        if not resp:
+            resp = await _get(client, f"https://{ip}/stat/welcome.php")
+        if resp:
+            results["status"] = "Online"
+            text = BeautifulSoup(resp.text, 'html.parser').get_text(separator=' | ')
+            sn_m = re.search(r'(?:Serial Number|S/N|Serie)[:\s|]+([A-Z0-9]{6,})', text, re.I)
+            if sn_m: results["serial"] = sn_m.group(1).strip()
+            loc_m = re.search(r'(?:Location|Lugar|Ubicaci[oó]n)[:\s|]+([^|]+)', text, re.I)
+            if loc_m: results["location"] = loc_m.group(1).strip()
 
-        # 2. Toner Installation Date
-        try:
-            cons_url = f"https://{ip}/stat/consumables_details.php"
-            resp = await client.get(cons_url, timeout=4.0)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                text = soup.get_text(separator=' | ')
-                # Buscamos 'Cartucho de tóner' seguido de la fecha
-                date_match = re.search(r'(?:Cartucho de t[óo]ner|Toner Cartridge)[\s|]+([A-Za-z]{3}\s\d{1,2},\s\d{4}|[0-9]{1,4}[-/][0-9]{1,2}[-/][0-9]{1,4})', text, re.I)
-                if date_match:
-                    results["toner_install_date"] = date_match.group(1)
-                else:
-                    # Fallback general
-                    fallback_date = re.search(r'(?:Fecha de instalaci[óo]n|Installation Date|Instalaci[óo]n)[:\s|]+([0-9]{1,4}[-/][0-9]{1,2}[-/][0-9]{1,4}|[A-Za-z]{3}\s\d{1,2},\s\d{4})', text, re.I)
-                    if fallback_date:
-                        results["toner_install_date"] = fallback_date.group(1)
-        except: pass
+        if results["status"] != "Online":
+            return results  # sin conexión, no seguimos intentando
 
-        # 3. Toner Information (Percentage)
-        try:
-            cons_info_url = f"https://{ip}/stat/consumables.php"
-            resp = await client.get(cons_info_url, timeout=4.0)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                text = soup.get_text(separator=' | ')
-                tn_m = re.search(r'(?:Black|Negro|Toner).*?(\d{1,3})\s*%', text, re.I | re.S)
-                if tn_m: 
-                    results["toner_percent"] = int(tn_m.group(1))
-                else:
-                    tn_alt = re.search(r'(\d{1,3})\s*%', text)
-                    if tn_alt:
-                        results["toner_percent"] = int(tn_alt.group(1))
-        except: pass
+        # 2. Fecha de instalación de tóner
+        resp = await _get(client, f"https://{ip}/stat/consumables_details.php")
+        if resp:
+            text = BeautifulSoup(resp.text, 'html.parser').get_text(separator=' | ')
+            date_m = (re.search(r'(?:Cartucho de t[óo]ner|Toner Cartridge)[\s|]+([A-Za-z]{3}\s\d{1,2},\s\d{4}|[0-9]{1,4}[-/][0-9]{1,2}[-/][0-9]{1,4})', text, re.I)
+                      or re.search(r'(?:Fecha de instalaci[óo]n|Installation Date)[:\s|]+([0-9]{1,4}[-/][0-9]{1,2}[-/][0-9]{1,4}|[A-Za-z]{3}\s\d{1,2},\s\d{4})', text, re.I))
+            if date_m:
+                results["toner_install_date"] = date_m.group(1)
 
-        # 4. Counters
-        try:
-            usage_url = f"https://{ip}/counters/usage.php"
-            resp = await client.get(usage_url, timeout=4.0)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                text = soup.get_text(separator=' | ')
-                print(text)
-                copied = re.search(r'(?:Hojas copiadas en negro|Black Copied Sheets)[\s|]+([\d,.]+)', text, re.I)
-                if copied:
-                    results["copied_count"] = int(copied.group(1).replace(',', '').replace('.', ''))
-                else:
-                    # Fallback just in case
-                    copied_fallback = re.search(r'(?:Copiado|Copias|Copied)[:\s|]+([\d,.]+)', text, re.I)
-                    if copied_fallback: results["copied_count"] = int(copied_fallback.group(1).replace(',', '').replace('.', ''))
-                
-                printed = re.search(r'(?:Hojas impresas en negro|Black Printed Sheets)[\s|]+([\d,.]+)', text, re.I)
-                if printed:
-                    results["printed_count"] = int(printed.group(1).replace(',', '').replace('.', ''))
-                else:
-                    printed_fallback = re.search(r'(?:Impreso|Impresiones|Printed)[:\s|]+([\d,.]+)', text, re.I)
-                    if printed_fallback: results["printed_count"] = int(printed_fallback.group(1).replace(',', '').replace('.', ''))
-                two_sided_copied = re.search(r'Black Copied 2 Sided Sheets.*?<td[^>]*>\s*([\d,.]+)\s*<', resp.text, re.I | re.DOTALL)
-                if two_sided_copied:
-                    results["two_sided_copied_count"] = int(two_sided_copied.group(1).replace(',', '').replace('.', ''))
+        # 3. Nivel de tóner
+        resp = await _get(client, f"https://{ip}/stat/consumables.php")
+        if resp:
+            text = BeautifulSoup(resp.text, 'html.parser').get_text(separator=' | ')
+            tn_m = re.search(r'(?:Black|Negro|Toner).*?(\d{1,3})\s*%', text, re.I | re.S) or re.search(r'(\d{1,3})\s*%', text)
+            if tn_m:
+                results["toner_percent"] = int(tn_m.group(1))
 
-                two_sided_printed = re.search(r'Black Printed 2 Sided Sheets.*?<td[^>]*>\s*([\d,.]+)\s*<', resp.text, re.I | re.DOTALL)
-                if two_sided_printed:
-                    results["two_sided_printed_count"] = int(two_sided_printed.group(1).replace(',', '').replace('.', ''))
-                
-                pc_m = re.search(r'(?:Total Impressions|Total|Contador)[:\s|]+([\d,.]+)', text, re.I)
-                if pc_m: 
-                    results["page_count"] = int(pc_m.group(1).replace(',', '').replace('.', ''))
-        except: pass
+        # 4. Contadores (aquí está el fix real, vía parseo de tabla)
+        resp = await _get(client, f"https://{ip}/counters/usage.php")
+        if resp:
+            rows = _parse_rows(resp.text)
+
+            copied = _find(rows, ['hojas', 'copiadas'], exclude=['dos caras']) \
+                or _find(rows, ['black', 'copied', 'sheets'])
+            printed = _find(rows, ['hojas', 'impresas'], exclude=['dos caras']) \
+                or _find(rows, ['black', 'printed', 'sheets'])
+            ts_copied = _find(rows, ['dos caras', 'copiadas']) \
+                or _find(rows, ['2', 'sided', 'copied'])
+            ts_printed = _find(rows, ['dos caras', 'impresas']) \
+                or _find(rows, ['2', 'sided', 'printed'])
+            total = _find(rows, ['total', 'impresiones']) \
+                or _find(rows, ['total', 'impressions'])
+
+            if copied is not None: results["copied_count"] = _to_int(copied) or 0
+            if printed is not None: results["printed_count"] = _to_int(printed) or 0
+            if ts_copied is not None: results["two_sided_copied_count"] = _to_int(ts_copied) or 0
+            if ts_printed is not None: results["two_sided_printed_count"] = _to_int(ts_printed) or 0
+            if total is not None: results["page_count"] = _to_int(total) or 0
 
     if results["page_count"] == 0:
         results["page_count"] = results["copied_count"] + results["printed_count"]
