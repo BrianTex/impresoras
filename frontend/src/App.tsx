@@ -4,7 +4,7 @@ import { Plus, Printer as PrinterIcon, RefreshCw, Calendar as CalendarIcon, Hash
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
-
+ 
 interface PrinterStatus {
   db_id: number;
   name: string;
@@ -27,14 +27,27 @@ interface PrinterStatus {
   daily_toner_drop: number;
   last_checked_at?: string;
 }
-
+ 
 interface AppNotification {
   id: number;
   message: string;
   created_at: string;
   read: boolean;
 }
-
+ 
+// --- Configuración por variables de entorno (Fase 0) ---
+// URL del backend: si no se define VITE_API_URL, se cae al comportamiento
+// anterior (mismo host que el navegador, puerto 8000). Esto permite que
+// cada hospital apunte a su propio backend (distinto puerto, dominio, HTTPS, etc.)
+// sin tocar el código.
+const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`;
+ 
+// Nombre de la aplicación mostrado en el encabezado (branding configurable por sitio).
+const APP_NAME = import.meta.env.VITE_APP_NAME || 'Panel de Impresoras';
+ 
+// Umbral (%) a partir del cual una impresora se marca visualmente como "tóner bajo".
+const LOW_TONER_THRESHOLD = Number(import.meta.env.VITE_LOW_TONER_THRESHOLD) || 15;
+ 
 function App() {
   const [printers, setPrinters] = useState<PrinterStatus[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,9 +60,7 @@ function App() {
   const [calendarDate, setCalendarDate] = useState<Date>(new Date());
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
-
-  const API_URL = `http://${window.location.hostname}:8000`;
-
+ 
   const fetchStatus = async () => {
     setLoading(true);
     try {
@@ -60,7 +71,7 @@ function App() {
     }
     setLoading(false);
   };
-
+ 
   const fetchNotifications = async () => {
     try {
       const response = await axios.get(`${API_URL}/notifications`);
@@ -69,7 +80,7 @@ function App() {
       console.error("Error fetching notifications", error);
     }
   };
-
+ 
   const markAsRead = async (id: number) => {
     try {
       await axios.post(`${API_URL}/notifications/${id}/read`);
@@ -78,7 +89,7 @@ function App() {
       console.error("Error marking read", error);
     }
   };
-
+ 
   useEffect(() => {
     fetchStatus();
     fetchNotifications();
@@ -88,7 +99,7 @@ function App() {
     }, 60000); // 60s
     return () => clearInterval(interval);
   }, []);
-
+ 
   const handleAddPrinter = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -100,7 +111,7 @@ function App() {
       alert(`Error al agregar impresora: ${error.response?.data?.detail || error.message}`); 
     }
   };
-
+ 
   const handleOpenHistory = async (printer: PrinterStatus) => {
     setSelectedPrinterHistory(printer);
     setCalendarDate(new Date());
@@ -112,7 +123,7 @@ function App() {
       console.error("Error fetching history", error);
     }
   };
-
+ 
   const handleRefreshPrinter = async (printer_id: number) => {
     try {
       await axios.post(`${API_URL}/printers/${printer_id}/refresh`);
@@ -121,15 +132,13 @@ function App() {
       console.error("Error refreshing printer", error);
     }
   };
-
-  console.log(printers);
-
+ 
   return (
     <div className="relative min-h-screen bg-[#0B0F19] font-sans overflow-x-hidden text-slate-300 selection:bg-indigo-500/30">
       {/* Animated Background Orbs */}
       <div className="fixed top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-blue-900/20 blur-[150px] mix-blend-screen pointer-events-none animate-float"></div>
       <div className="fixed bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-indigo-900/20 blur-[120px] mix-blend-screen pointer-events-none animate-float" style={{ animationDelay: '2s' }}></div>
-
+ 
       <div className="relative z-10 p-4 md:p-8">
         <header className="max-w-7xl mx-auto mb-12 mt-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div>
@@ -141,11 +150,11 @@ function App() {
               <div className="p-3 bg-white/5 backdrop-blur-md shadow-lg shadow-black/50 rounded-2xl border border-white/10">
                 <PrinterIcon className="text-indigo-400" size={36} />
               </div>
-              Xerox Dashboard
+              {APP_NAME}
             </h1>
             <p className="text-slate-500 mt-3 text-lg font-medium max-w-xl">Panel de control de consumibles e historial volumétrico en tiempo real.</p>
           </div>
-
+ 
           <div className="flex flex-wrap gap-3 w-full md:w-auto relative">
             <div className="relative">
               <button onClick={() => setShowNotifications(!showNotifications)} className="flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 p-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg text-white group">
@@ -178,7 +187,7 @@ function App() {
                 </div>
               )}
             </div>
-
+ 
             <button onClick={fetchStatus} disabled={loading} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg font-semibold text-white group disabled:opacity-50">
               <RefreshCw size={18} className={`text-slate-400 group-hover:text-indigo-400 transition-colors ${loading ? 'animate-spin text-indigo-400' : ''}`} />
               <span>Actualizar</span>
@@ -188,7 +197,7 @@ function App() {
             </button>
           </div>
         </header>
-
+ 
         <main className="max-w-7xl mx-auto">
           {showAddForm && (
             <div className="mb-10 p-1 rounded-3xl bg-gradient-to-br from-indigo-500/30 to-blue-500/10 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -214,16 +223,16 @@ function App() {
               </div>
             </div>
           )}
-
+ 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
             {printers.map((printer) => {
               const isOnline = printer.status === 'Online';
-              const isLowToner = printer.toner_percent <= 15;
-
+              const isLowToner = printer.toner_percent <= LOW_TONER_THRESHOLD;
+ 
               return (
                 <div key={printer.db_id} className="group relative bg-[#131826]/80 backdrop-blur-xl border border-white/5 rounded-3xl overflow-hidden hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] hover:border-white/10 transition-all duration-300">
                   <div className={`absolute top-0 left-0 w-full h-1 ${isOnline ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-rose-500 to-red-600'}`}></div>
-
+ 
                   <div className="p-7">
                     <div className="flex justify-between items-start mb-6">
                       <div className="pr-4">
@@ -254,11 +263,11 @@ function App() {
                         </button>
                       </div>
                     </div>
-
+ 
                     <div className="space-y-6">
                       <div className="bg-[#0B0F19] p-5 rounded-2xl border border-white/5 shadow-inner relative overflow-hidden">
                         {isLowToner && <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/20 rounded-bl-full -z-10 blur-2xl"></div>}
-
+ 
                         <div className="flex justify-between items-center mb-3">
                           <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-lg ${isLowToner ? 'bg-rose-500/20 text-rose-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
@@ -268,7 +277,7 @@ function App() {
                           </div>
                           <span className={`text-2xl font-black ${isLowToner ? 'text-rose-400' : 'text-white'}`}>{printer.toner_percent}%</span>
                         </div>
-
+ 
                         <div className="w-full bg-white/5 rounded-full h-3 mb-4 overflow-hidden border border-white/5">
                           <div
                             className={`h-full rounded-full transition-all duration-1000 ease-out relative ${isLowToner ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.8)]' : 'bg-gradient-to-r from-indigo-500 to-blue-400 shadow-[0_0_10px_rgba(99,102,241,0.5)]'}`}
@@ -277,7 +286,7 @@ function App() {
                             <div className="absolute inset-0 bg-white/20 w-full" style={{ animation: 'shimmer 2s infinite' }}></div>
                           </div>
                         </div>
-
+ 
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center justify-between text-[11px] font-medium text-slate-400 bg-white/5 px-3 py-2 rounded-xl border border-white/5">
                             <div className="flex items-center gap-1.5">
@@ -286,7 +295,7 @@ function App() {
                             </div>
                             <span className="text-white font-semibold">{printer.toner_install_date}</span>
                           </div>
-
+ 
                           <div className="flex items-center justify-between text-[11px] font-medium text-slate-400 bg-white/5 px-3 py-2 rounded-xl border border-white/5">
                             <div className="flex items-center gap-1.5">
                               <TrendingDown size={12} className="text-rose-400" />
@@ -296,7 +305,7 @@ function App() {
                           </div>
                         </div>
                       </div>
-
+ 
                       <div className="grid grid-cols-2 gap-3 mb-3">
                         <div className="bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20 transition-all hover:bg-indigo-500/20">
                           <p className="text-[10px] uppercase font-bold text-indigo-300 tracking-widest mb-2 flex items-center gap-1.5">
@@ -311,7 +320,7 @@ function App() {
                           <span className="text-3xl font-black text-white tracking-tight">{printer.daily_copied}</span>
                         </div>
                       </div>
-
+ 
                       <div className="grid grid-cols-2 gap-3">
                         <div className="bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20 transition-all hover:bg-indigo-500/20">
                           <p className="text-[10px] uppercase font-bold text-indigo-300 tracking-widest mb-2 flex items-center gap-1.5">
@@ -326,7 +335,7 @@ function App() {
                           <span className="text-3xl font-black text-white tracking-tight">{printer.daily_two_sided_copied || 0}</span>
                         </div>
                       </div>
-
+ 
                       <div className="space-y-1 bg-white/5 p-4 rounded-2xl border border-white/5">
                         <div className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
                           <span className="text-xs font-medium text-slate-400 flex items-center gap-2"><FileText size={12} /> Hojas impresas totales</span>
@@ -349,7 +358,7 @@ function App() {
                           <span className="text-sm font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20">{printer.page_count.toLocaleString()}</span>
                         </div>
                       </div>
-
+ 
                       <div className="pt-2">
                         <button onClick={() => handleOpenHistory(printer)} className="w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl flex items-center justify-center gap-2 text-slate-300 hover:text-white transition-all font-semibold group/btn">
                           <CalendarDays size={18} className="text-indigo-400 group-hover/btn:scale-110 transition-transform" />
@@ -362,7 +371,7 @@ function App() {
               );
             })}
           </div>
-
+ 
           {!loading && printers.length === 0 && (
             <div className="text-center py-20 bg-white/5 backdrop-blur-sm rounded-3xl border border-white/10 border-dashed">
               <PrinterIcon className="mx-auto text-slate-600 mb-4" size={48} />
@@ -370,7 +379,7 @@ function App() {
               <p className="text-slate-500 text-sm">Haz clic en "Nueva Impresora" para comenzar a monitorear.</p>
             </div>
           )}
-
+ 
           {historyModalOpen && selectedPrinterHistory && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-[#131826] border border-white/10 rounded-3xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
@@ -386,7 +395,7 @@ function App() {
                     <X size={20} />
                   </button>
                 </div>
-
+ 
                 <div className="mb-6 custom-calendar-wrapper">
                   <Calendar 
                     onChange={(val) => setCalendarDate(val as Date)} 
@@ -402,11 +411,11 @@ function App() {
                     }}
                   />
                 </div>
-
+ 
                 {(() => {
                   const selectedDateStr = format(calendarDate, 'yyyy-MM-dd');
                   const selectedDayData = historyData.find(d => d.date === selectedDateStr);
-
+ 
                   return (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-slate-300 mb-2 border-b border-white/10 pb-2">Datos del {format(calendarDate, 'dd/MM/yyyy')}</h4>
@@ -447,7 +456,7 @@ function App() {
           )}
         </main>
       </div>
-
+ 
       <style>{`
         @keyframes shimmer {
           0% { transform: translateX(-100%); }
@@ -533,5 +542,5 @@ function App() {
     </div>
   );
 }
-
+ 
 export default App;

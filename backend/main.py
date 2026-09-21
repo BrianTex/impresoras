@@ -6,9 +6,19 @@ from pydantic import BaseModel
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
 import asyncio
+import logging
 
 import models, database, snmp_service
 from database import SessionLocal, engine
+from config import settings
+
+# --- Logging ---
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("printers_dashboard")
+
 
 def parse_printer_date(date_str):
     if not date_str or date_str == "N/A": return None
@@ -27,10 +37,10 @@ def parse_printer_date(date_str):
     return None
 
 models.Base.metadata.create_all(bind=engine)
-app = FastAPI()
+app = FastAPI(title=settings.APP_NAME)
 
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+    CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
@@ -52,6 +62,7 @@ def update_printer_sync(db: Session, p: models.Printer, status: dict):
                     printer_id=p.id,
                     message=f'Tóner cambiado en la impresora {p.name} (Nueva fecha: {status["toner_install_date"]})'
                 ))
+                logger.info(f"Cambio de tóner detectado en impresora '{p.name}' ({p.ip_address})")
             p.last_toner_install_date = status["toner_install_date"]
             install_date = parse_printer_date(status["toner_install_date"])
             if install_date:
@@ -110,8 +121,12 @@ def update_printer_sync(db: Session, p: models.Printer, status: dict):
         p.daily_two_sided_copied = daily_ts_copied
         p.daily_two_sided_printed = daily_ts_printed
         p.daily_toner_drop = daily_toner_drop
+
+        if status["toner_percent"] <= settings.LOW_TONER_THRESHOLD:
+            logger.warning(f"Tóner bajo en '{p.name}' ({p.ip_address}): {status['toner_percent']}%")
     else:
         p.last_status = "Offline"
+        logger.warning(f"Impresora '{p.name}' ({p.ip_address}) no responde (Offline)")
 
     p.last_checked_at = datetime.utcnow()
     db.commit()
@@ -122,12 +137,16 @@ async def refresh_printer(printer_id: int):
         p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
         if not p:
             return
+        logger.info(f"Actualizando impresora '{p.name}' ({p.ip_address})")
         status = await snmp_service.get_printer_data(p.ip_address)
         await run_in_threadpool(update_printer_sync, db, p, status)
+    except Exception:
+        logger.exception(f"Error actualizando impresora id={printer_id}")
     finally:
         db.close()
 
 async def background_status_updater():
+    logger.info(f"Tarea de actualización periódica iniciada (cada {settings.SCRAPE_INTERVAL_SECONDS}s)")
     while True:
         try:
             db = SessionLocal()
@@ -135,13 +154,23 @@ async def background_status_updater():
             db.close()
             for pid in printer_ids:
                 await refresh_printer(pid)
-        except Exception as e:
-            print("Error en tarea de fondo:", e)
-        await asyncio.sleep(3600)
+        except Exception:
+            logger.exception("Error en tarea de fondo de actualización")
+        await asyncio.sleep(settings.SCRAPE_INTERVAL_SECONDS)
 
 @app.on_event("startup")
 async def startup_event():
+    logger.info(f"{settings.APP_NAME} iniciado (host={settings.HOST}, port={settings.PORT})")
     asyncio.create_task(background_status_updater())
+
+@app.get("/health")
+def health_check():
+    """Endpoint simple para monitoreo externo (uptime checks, balanceadores, etc.)."""
+    return {
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "time": datetime.utcnow().isoformat(),
+    }
 
 @app.get("/printers")
 def read_printers(db: Session = Depends(get_db)):
@@ -159,6 +188,7 @@ def create_printer(printer: PrinterCreate, db: Session = Depends(get_db)):
     db.add(db_p)
     db.commit()
     db.refresh(db_p)
+    logger.info(f"Impresora registrada: '{db_p.name}' ({db_p.ip_address})")
     # dispara un primer scraping en segundo plano sin bloquear la respuesta
     asyncio.create_task(refresh_printer(db_p.id))
     return db_p
@@ -207,4 +237,4 @@ def read_notification(notif_id: int, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT)
