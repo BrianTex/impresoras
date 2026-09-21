@@ -1,4 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+import csv
+import io
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, date
@@ -7,7 +10,6 @@ from fastapi.concurrency import run_in_threadpool
 import uvicorn
 import asyncio
 import logging
-
 import models, database, snmp_service
 from database import SessionLocal, engine
 from config import settings
@@ -131,29 +133,39 @@ def update_printer_sync(db: Session, p: models.Printer, status: dict):
     p.last_checked_at = datetime.utcnow()
     db.commit()
 
-async def refresh_printer(printer_id: int):
-    db = SessionLocal()
-    try:
-        p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
-        if not p:
-            return
-        logger.info(f"Actualizando impresora '{p.name}' ({p.ip_address})")
-        status = await snmp_service.get_printer_data(p.ip_address)
-        await run_in_threadpool(update_printer_sync, db, p, status)
-    except Exception:
-        logger.exception(f"Error actualizando impresora id={printer_id}")
-    finally:
-        db.close()
+async def refresh_printer(printer_id: int, semaphore: asyncio.Semaphore | None = None):
+    async def _do_refresh():
+        db = SessionLocal()
+        try:
+            p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
+            if not p:
+                return
+            logger.info(f"Actualizando impresora '{p.name}' ({p.ip_address})")
+            status = await snmp_service.get_printer_data(p.ip_address)
+            await run_in_threadpool(update_printer_sync, db, p, status)
+        except Exception:
+            logger.exception(f"Error actualizando impresora id={printer_id}")
+        finally:
+            db.close()
+
+    if semaphore is not None:
+        async with semaphore:
+            await _do_refresh()
+    else:
+        await _do_refresh()
 
 async def background_status_updater():
-    logger.info(f"Tarea de actualización periódica iniciada (cada {settings.SCRAPE_INTERVAL_SECONDS}s)")
+    logger.info(
+        f"Tarea de actualización periódica iniciada "
+        f"(cada {settings.SCRAPE_INTERVAL_SECONDS}s, máx {settings.MAX_CONCURRENT_SCRAPES} en paralelo)"
+    )
+    semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_SCRAPES)
     while True:
         try:
             db = SessionLocal()
             printer_ids = [p.id for p in db.query(models.Printer.id).all()]
             db.close()
-            for pid in printer_ids:
-                await refresh_printer(pid)
+            await asyncio.gather(*(refresh_printer(pid, semaphore) for pid in printer_ids))
         except Exception:
             logger.exception("Error en tarea de fondo de actualización")
         await asyncio.sleep(settings.SCRAPE_INTERVAL_SECONDS)
@@ -180,6 +192,10 @@ class PrinterCreate(BaseModel):
     name: str
     ip_address: str
 
+class PrinterUpdate(BaseModel):
+    name: str | None = None
+    ip_address: str | None = None
+
 @app.post("/printers")
 def create_printer(printer: PrinterCreate, db: Session = Depends(get_db)):
     if db.query(models.Printer).filter(models.Printer.ip_address == printer.ip_address).first():
@@ -192,6 +208,116 @@ def create_printer(printer: PrinterCreate, db: Session = Depends(get_db)):
     # dispara un primer scraping en segundo plano sin bloquear la respuesta
     asyncio.create_task(refresh_printer(db_p.id))
     return db_p
+
+@app.get("/printers/export")
+def export_printers_csv(db: Session = Depends(get_db)):
+    """Exporta el snapshot actual de todas las impresoras como CSV."""
+    printers = db.query(models.Printer).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "Nombre", "IP", "Estado", "Serie", "Ubicacion",
+        "Total Paginas", "Copiadas Total", "Impresas Total",
+        "Copiadas 2 Caras Total", "Impresas 2 Caras Total",
+        "Toner %", "Fecha Instalacion Toner",
+        "Impresas Hoy", "Copiadas Hoy",
+        "Impresas 2 Caras Hoy", "Copiadas 2 Caras Hoy",
+        "Gasto Toner Hoy %", "Ultima Verificacion",
+    ])
+    for p in printers:
+        writer.writerow([
+            p.name, p.ip_address, p.last_status, p.serial, p.location,
+            p.page_count, p.copied_count, p.printed_count,
+            p.two_sided_copied_count, p.two_sided_printed_count,
+            p.toner_percent, p.last_toner_install_date or "N/A",
+            p.daily_printed, p.daily_copied,
+            p.daily_two_sided_printed, p.daily_two_sided_copied,
+            p.daily_toner_drop,
+            p.last_checked_at.isoformat() if p.last_checked_at else "",
+        ])
+
+    buffer.seek(0)
+    filename = f"impresoras_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.get("/printers/{printer_id}/history/export")
+def export_printer_history_csv(printer_id: int, db: Session = Depends(get_db)):
+    """Exporta el historico diario de una impresora como CSV."""
+    p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Impresora no encontrada")
+
+    history = db.query(models.PrinterHistory).filter(
+        models.PrinterHistory.printer_id == printer_id
+    ).order_by(models.PrinterHistory.date.asc()).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "Fecha", "Impresas", "Copiadas",
+        "Impresas 2 Caras", "Copiadas 2 Caras",
+        "Gasto Toner %", "Cambio de Toner",
+    ])
+    for h in history:
+        writer.writerow([
+            h.date.isoformat(), h.daily_printed, h.daily_copied,
+            h.daily_two_sided_printed, h.daily_two_sided_copied,
+            h.daily_toner_drop, "Si" if h.toner_changed else "No",
+        ])
+
+    buffer.seek(0)
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in p.name)
+    filename = f"historial_{safe_name}_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.put("/printers/{printer_id}")
+def update_printer(printer_id: int, printer: PrinterUpdate, db: Session = Depends(get_db)):
+    db_p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
+    if not db_p:
+        raise HTTPException(status_code=404, detail="Impresora no encontrada")
+
+    if printer.ip_address and printer.ip_address != db_p.ip_address:
+        existing = db.query(models.Printer).filter(
+            models.Printer.ip_address == printer.ip_address,
+            models.Printer.id != printer_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="IP ya registrada por otra impresora")
+        db_p.ip_address = printer.ip_address
+
+    if printer.name:
+        db_p.name = printer.name
+
+    db.commit()
+    db.refresh(db_p)
+    logger.info(f"Impresora actualizada: '{db_p.name}' ({db_p.ip_address})")
+    return db_p
+
+@app.delete("/printers/{printer_id}")
+def delete_printer(printer_id: int, db: Session = Depends(get_db)):
+    db_p = db.query(models.Printer).filter(models.Printer.id == printer_id).first()
+    if not db_p:
+        raise HTTPException(status_code=404, detail="Impresora no encontrada")
+
+    # Sin cascade definido en los modelos, borramos a mano los registros relacionados
+    db.query(models.DailyLog).filter(models.DailyLog.printer_id == printer_id).delete()
+    db.query(models.PrinterHistory).filter(models.PrinterHistory.printer_id == printer_id).delete()
+    db.query(models.Notification).filter(models.Notification.printer_id == printer_id).delete()
+
+    nombre, ip = db_p.name, db_p.ip_address
+    db.delete(db_p)
+    db.commit()
+    logger.info(f"Impresora eliminada: '{nombre}' ({ip})")
+    return {"status": "ok"}
 
 @app.get("/printers/status")
 def get_all_status(db: Session = Depends(get_db)):

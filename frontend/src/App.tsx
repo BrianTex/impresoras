@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Plus, Printer as PrinterIcon, RefreshCw, Calendar as CalendarIcon, Hash, Percent, TrendingDown, Copy, FileText, Layers, Droplet, Activity, Server, MapPin, CalendarDays, X, Bell, CheckCircle2 } from 'lucide-react';
+import { Plus, Printer as PrinterIcon, RefreshCw, Calendar as CalendarIcon, Hash, Percent, TrendingDown, Copy, FileText, Layers, Droplet, Activity, Server, MapPin, CalendarDays, X, Bell, CheckCircle2, Pencil, Trash2, Download } from 'lucide-react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
@@ -52,6 +52,9 @@ function App() {
   const [printers, setPrinters] = useState<PrinterStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingPrinter, setEditingPrinter] = useState<PrinterStatus | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editIp, setEditIp] = useState('');
   const [newName, setNewName] = useState('');
   const [newIp, setNewIp] = useState('');
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
@@ -112,6 +115,36 @@ function App() {
     }
   };
  
+  const handleOpenEdit = (printer: PrinterStatus) => {
+    setEditingPrinter(printer);
+    setEditName(printer.name);
+    setEditIp(printer.ip);
+  };
+
+  const handleUpdatePrinter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPrinter) return;
+    try {
+      await axios.put(`${API_URL}/printers/${editingPrinter.db_id}`, { name: editName, ip_address: editIp });
+      setEditingPrinter(null);
+      fetchStatus();
+    } catch (error: any) {
+      console.error("Error al editar impresora:", error);
+      alert(`Error al editar impresora: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleDeletePrinter = async (printer: PrinterStatus) => {
+    if (!window.confirm(`¿Eliminar "${printer.name}" (${printer.ip})? Esto borrará también su historial.`)) return;
+    try {
+      await axios.delete(`${API_URL}/printers/${printer.db_id}`);
+      fetchStatus();
+    } catch (error: any) {
+      console.error("Error al eliminar impresora:", error);
+      alert(`Error al eliminar impresora: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
   const handleOpenHistory = async (printer: PrinterStatus) => {
     setSelectedPrinterHistory(printer);
     setCalendarDate(new Date());
@@ -188,6 +221,10 @@ function App() {
               )}
             </div>
  
+            <button onClick={() => window.open(`${API_URL}/printers/export`, '_blank')} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg font-semibold text-white group">
+              <Download size={18} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+              <span>Exportar CSV</span>
+            </button>
             <button onClick={fetchStatus} disabled={loading} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white/5 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all shadow-lg font-semibold text-white group disabled:opacity-50">
               <RefreshCw size={18} className={`text-slate-400 group-hover:text-indigo-400 transition-colors ${loading ? 'animate-spin text-indigo-400' : ''}`} />
               <span>Actualizar</span>
@@ -258,9 +295,17 @@ function App() {
                         <div className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isOnline ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
                           {printer.status}
                         </div>
-                        <button onClick={() => handleRefreshPrinter(printer.db_id)} className="text-slate-500 hover:text-indigo-400 transition-colors bg-white/5 hover:bg-white/10 p-1.5 rounded-full border border-white/5" title="Forzar actualización">
-                          <RefreshCw size={14} />
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => handleRefreshPrinter(printer.db_id)} className="text-slate-500 hover:text-indigo-400 transition-colors bg-white/5 hover:bg-white/10 p-1.5 rounded-full border border-white/5" title="Forzar actualización">
+                            <RefreshCw size={14} />
+                          </button>
+                          <button onClick={() => handleOpenEdit(printer)} className="text-slate-500 hover:text-amber-400 transition-colors bg-white/5 hover:bg-white/10 p-1.5 rounded-full border border-white/5" title="Editar impresora">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => handleDeletePrinter(printer)} className="text-slate-500 hover:text-rose-400 transition-colors bg-white/5 hover:bg-white/10 p-1.5 rounded-full border border-white/5" title="Eliminar impresora">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
  
@@ -391,9 +436,14 @@ function App() {
                     </h3>
                     <p className="text-sm text-slate-400">{selectedPrinterHistory.name}</p>
                   </div>
-                  <button onClick={() => setHistoryModalOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white">
-                    <X size={20} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => window.open(`${API_URL}/printers/${selectedPrinterHistory.db_id}/history/export`, '_blank')} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-emerald-400" title="Exportar historial CSV">
+                      <Download size={18} />
+                    </button>
+                    <button onClick={() => setHistoryModalOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white">
+                      <X size={20} />
+                    </button>
+                  </div>
                 </div>
  
                 <div className="mb-6 custom-calendar-wrapper">
@@ -451,6 +501,29 @@ function App() {
                     </div>
                   );
                 })()}
+              </div>
+            </div>
+          )}
+          {editingPrinter && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-[#131826] border border-white/10 rounded-3xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Pencil className="text-indigo-400" size={20} />
+                    Editar Impresora
+                  </h3>
+                  <button onClick={() => setEditingPrinter(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white">
+                    <X size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleUpdatePrinter} className="flex flex-col gap-4">
+                  <input type="text" placeholder="Nombre" className="w-full bg-[#0B0F19] border border-white/10 px-5 py-4 rounded-2xl focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-white placeholder:text-slate-600 font-medium" value={editName} onChange={(e) => setEditName(e.target.value)} required />
+                  <input type="text" placeholder="Dirección IP" className="w-full bg-[#0B0F19] border border-white/10 px-5 py-4 rounded-2xl focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-white placeholder:text-slate-600 font-mono text-sm" value={editIp} onChange={(e) => setEditIp(e.target.value)} required />
+                  <div className="flex gap-2">
+                    <button type="submit" className="flex-1 bg-white text-black px-8 py-4 rounded-2xl hover:bg-slate-200 font-bold transition-all shadow-lg hover:shadow-xl">Guardar Cambios</button>
+                    <button type="button" onClick={() => setEditingPrinter(null)} className="bg-white/5 text-white border border-white/10 px-6 py-4 rounded-2xl hover:bg-white/10 font-bold transition-all">Cancelar</button>
+                  </div>
+                </form>
               </div>
             </div>
           )}

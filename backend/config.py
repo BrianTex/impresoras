@@ -27,7 +27,8 @@ class Settings:
  
     # Scraping periódico
     SCRAPE_INTERVAL_SECONDS: int = int(os.getenv("SCRAPE_INTERVAL_SECONDS", "3600"))
- 
+    MAX_CONCURRENT_SCRAPES: int = int(os.getenv("MAX_CONCURRENT_SCRAPES", "5"))
+
     # Umbral (%) a partir del cual se considera "tóner bajo" en logs/alertas del backend
     LOW_TONER_THRESHOLD: int = int(os.getenv("LOW_TONER_THRESHOLD", "15"))
  
